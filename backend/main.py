@@ -93,7 +93,7 @@ class Fatura(Base):
     data_vencimento = Column(Date, nullable=True)
     data_pagamento = Column(Date, nullable=True)
     numero_circuito = Column(String, nullable=True)
-    status = Column(String, default="Pendente")
+    status = Column(String, default="Pendente envio do boleto")
     desconto = Column(Float, default=0.0)
     acrescimo = Column(Float, default=0.0)
     valor_ajustado = Column(Float)
@@ -575,7 +575,7 @@ def listar_faturas(db: Session = Depends(get_db), current_user: User = Depends(g
 async def lancar_fatura(
     contrato_id: Union[str, int] = Form(...), mes_referencia: str = Form(...), valor: Union[str, float] = Form(...),
     data_vencimento: Optional[str] = Form(None), numero_circuito: Optional[str] = Form(None),
-    status: str = Form("Pendente"), desconto: Union[str, float] = Form(0.0), acrescimo: Union[str, float] = Form(0.0),
+    status: str = Form("Pendente envio do boleto"), desconto: Union[str, float] = Form(0.0), acrescimo: Union[str, float] = Form(0.0),
     observacoes: Optional[str] = Form(None), 
     arquivo: UploadFile = File(...), 
     arquivo_nf: UploadFile = File(None),
