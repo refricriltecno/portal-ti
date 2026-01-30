@@ -1,24 +1,23 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# --- Regras específicas para o Backend Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+venv/
+ENV/
 
-node_modules
-dist
-dist-ssr
-*.local
+# --- Regras para o Banco de Dados Local ---
+*.sqlite3
+*.db
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# --- Regras para Uploads e Documentos (Refricril) ---
+# Bloqueia a pasta de uploads mas mantém a pasta no Git (opcional)
+backend/uploads/*
+!backend/uploads/.gitkeep
+uploads/*
+!uploads/.gitkeep
+
+# Bloqueia qualquer PDF que possa ser baixado ou gerado acidentalmente
+*.pdf
+*.PDF
