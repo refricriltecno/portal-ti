@@ -36,6 +36,7 @@ class User(Base):
     hashed_password = Column(String)
     role = Column(String, default="user")
     is_active = Column(Boolean, default=True)
+    foto_perfil = Column(String, nullable=True)
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
@@ -101,6 +102,7 @@ class Fatura(Base):
     caminho_arquivo = Column(String)
     caminho_nf = Column(String, nullable=True)
     data_upload = Column(Date, default=datetime.now().date)
+    ativo = Column(Boolean, default=True)
     contrato = relationship("Contrato", back_populates="faturas")
 
 class Credencial(Base):
@@ -188,13 +190,42 @@ async def get_current_user_optional(token: str = Depends(oauth2_scheme), db: Ses
     except JWTError:
         return None
 
+# --- FUNÇÕES DE PERMISSÕES ---
+def verificar_permissao(usuario: User, rotas_permitidas: list):
+    """Verifica se o usuário tem permissão para acessar a rota"""
+    if usuario.role not in rotas_permitidas:
+        raise HTTPException(status_code=403, detail="Você não tem permissão para acessar este recurso")
+
+def check_admin(usuario: User):
+    """Verifica se o usuário é admin"""
+    if usuario.role != "admin":
+        raise HTTPException(status_code=403, detail="Acesso apenas para administradores")
+
+def check_can_view_credentials(usuario: User):
+    """Verifica se o usuário pode visualizar credenciais"""
+    # Apenas admin e tercerizado podem ver credenciais
+    if usuario.role not in ["admin", "tercerizado"]:
+        raise HTTPException(status_code=403, detail="Acesso apenas para administradores ou terceirizados")
+
+# --- MAPEAMENTO DE PERMISSÕES POR RECURSO ---
+PERMISSOES = {
+    "dashboard": ["admin", "normal", "tercerizado"],
+    "faturas": ["admin", "normal", "tercerizado"],
+    "contratos": ["admin", "normal", "tercerizado"],
+    "telefonia": ["admin", "normal", "tercerizado"],
+    "historico": ["admin", "normal", "tercerizado"],
+    "credenciais": ["admin", "tercerizado"],
+    "usuarios": ["admin"],
+    "logs": ["admin"],
+}
+
 @app.post("/token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not pwd_context.verify(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Credenciais inválidas")
     token = jwt.encode({"sub": user.username, "role": user.role}, SECRET_KEY, algorithm=ALGORITHM)
-    return {"access_token": token, "token_type": "bearer", "role": user.role, "username": user.username}
+    return {"access_token": token, "token_type": "bearer", "role": user.role, "username": user.username, "foto_perfil": user.foto_perfil}
 
 # --- REGISTRO DE NOVO USUÁRIO (self-signup ou admin) ---
 @app.post("/register")
@@ -230,7 +261,7 @@ async def register(username: str = Form(...), password: str = Form(...), current
 @app.get("/me")
 async def get_profile(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == current_user.id).first()
-    return {"id": user.id, "username": user.username, "role": user.role, "is_active": user.is_active}
+    return {"id": user.id, "username": user.username, "role": user.role, "is_active": user.is_active, "foto_perfil": user.foto_perfil}
 
 @app.put("/me/password")
 async def change_password(current_password: str = Form(...), new_password: str = Form(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -246,7 +277,75 @@ async def change_password(current_password: str = Form(...), new_password: str =
     
     return {"status": "senha alterada com sucesso"}
 
+@app.post("/me/foto")
+async def upload_foto_perfil(foto: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not foto.filename:
+        raise HTTPException(status_code=400, detail="Arquivo não selecionado")
+    
+    # Validar tipo de arquivo
+    allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if foto.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Tipo de arquivo inválido. Use JPG, PNG, GIF ou WebP")
+    
+    # Criar nome único para a foto
+    ts = datetime.now().strftime('%Y%m%d%H%M%S')
+    extensao = foto.filename.split('.')[-1].lower()
+    nome_arquivo = f"FOTO_{current_user.id}_{ts}.{extensao}"
+    caminho_pasta = os.path.join(UPLOAD_DIR, "perfis")
+    os.makedirs(caminho_pasta, exist_ok=True)
+    
+    caminho_completo = os.path.join(caminho_pasta, nome_arquivo)
+    with open(caminho_completo, "wb") as f:
+        shutil.copyfileobj(foto.file, f)
+    
+    # Atualizar usuário com novo caminho da foto
+    user = db.query(User).filter(User.id == current_user.id).first()
+    caminho_relativo = f"uploads/perfis/{nome_arquivo}"
+    user.foto_perfil = caminho_relativo
+    db.commit()
+    
+    registrar_log(db, current_user.username, "UPDATE", "USER", current_user.id, f"Atualizou foto de perfil")
+    
+    return {"status": "sucesso", "foto_url": caminho_relativo}
+
 # --- ROTAS DE USUÁRIOS E LOGS ---
+@app.get("/users/perfis")
+def get_perfis(current_user: User = Depends(get_current_user)):
+    """Retorna informações sobre os perfis disponíveis"""
+    check_admin(current_user)
+    
+    perfis_info = {
+        "admin": {
+            "nome": "Administrador (TI)",
+            "descricao": "Acesso total ao sistema",
+            "permissoes": PERMISSOES
+        },
+        "normal": {
+            "nome": "Usuário Normal",
+            "descricao": "Acesso a dashboard, faturas, contratos, telefonia e histórico",
+            "permissoes": {
+                "dashboard": ["normal"],
+                "faturas": ["normal"],
+                "contratos": ["normal"],
+                "telefonia": ["normal"],
+                "historico": ["normal"]
+            }
+        },
+        "tercerizado": {
+            "nome": "Tercerizado",
+            "descricao": "Acesso a dashboard, faturas, contratos, telefonia, histórico e credenciais",
+            "permissoes": {
+                "dashboard": ["tercerizado"],
+                "faturas": ["tercerizado"],
+                "contratos": ["tercerizado"],
+                "telefonia": ["tercerizado"],
+                "historico": ["tercerizado"],
+                "credenciais": ["tercerizado"]
+            }
+        }
+    }
+    return perfis_info
+
 @app.get("/users/")
 def list_users(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role != 'admin': raise HTTPException(status_code=403)
@@ -277,15 +376,68 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_user), db
     registrar_log(db, current_user.username, "DELETE", "USER", user_id, f"Usuário deletado: {username_deletado}")
     return {"status": "usuário deletado"}
 
+@app.put("/users/{user_id}/role")
+def update_user_role(user_id: int, role: str = Form(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Atualiza o role/perfil de um usuário"""
+    check_admin(current_user)
+    if user_id == current_user.id: raise HTTPException(status_code=400, detail="Não pode alterar seu próprio perfil")
+    
+    # Validar role
+    valid_roles = ['admin', 'normal', 'tercerizado']
+    if role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Perfil inválido. Deve ser um de: {', '.join(valid_roles)}")
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user: raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    
+    role_antigo = user.role
+    user.role = role
+    db.commit()
+    registrar_log(db, current_user.username, "UPDATE", "USER", user_id, f"Perfil alterado: {role_antigo} → {role}")
+    return {"status": "perfil atualizado", "novo_role": role}
+
 @app.get("/logs/")
 def get_logs(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != 'admin': raise HTTPException(status_code=403)
+    check_admin(current_user)
     return db.query(AuditLog).order_by(AuditLog.id.desc()).limit(100).all()
 
+@app.get("/historico/")
+def get_historico(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Retorna o histórico de ações permitidas para o usuário"""
+    verificar_permissao(current_user, PERMISSOES["historico"])
+    
+    query = db.query(AuditLog).order_by(AuditLog.id.desc())
+    
+    # Filtra histórico por perfil do usuário
+    if current_user.role in ["normal", "tercerizado"]:
+        # Normal e Tercerizado veem apenas Contratos, Faturas e Telefonia
+        query = query.filter(AuditLog.alvo.in_(["CONTRATO", "FATURA", "TELEFONIA"]))
+    # Admin vê tudo
+    
+    return query.limit(100).all()
+
 # --- ROTAS CREDENCIAIS ---
+@app.get("/dashboard/")
+def get_dashboard(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Retorna dados do dashboard para o usuário autenticado"""
+    verificar_permissao(current_user, PERMISSOES["dashboard"])
+    
+    # Retorna estatísticas gerais
+    total_contratos = db.query(Contrato).filter(Contrato.ativo == True).count()
+    total_faturas = db.query(Fatura).count()
+    total_numeros = db.query(NumeroTelefonico).filter(NumeroTelefonico.ativo == True).count()
+    
+    return {
+        "usuario": current_user.username,
+        "role": current_user.role,
+        "total_contratos": total_contratos,
+        "total_faturas": total_faturas,
+        "total_numeros_telefonicos": total_numeros
+    }
+
 @app.get("/credenciais/")
 def listar_credenciais(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != 'admin': raise HTTPException(status_code=403)
+    check_can_view_credentials(current_user)
     return db.query(Credencial).filter(Credencial.ativo == True).all()
 
 @app.post("/credenciais/")
@@ -296,7 +448,7 @@ async def criar_credencial(
     telefone: Optional[str] = Form(None), responsavel: Optional[str] = Form(None),
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin': raise HTTPException(status_code=403)
+    check_admin(current_user)
     
     nova = Credencial(
         nome_servico=nome_servico, url_acesso=url_acesso, usuario=usuario, senha=senha,
@@ -315,7 +467,7 @@ async def editar_credencial(
     telefone: Optional[str] = Form(None), responsavel: Optional[str] = Form(None),
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != 'admin': raise HTTPException(status_code=403)
+    check_admin(current_user)
     
     c = db.query(Credencial).filter(Credencial.id == id).first()
     if not c: raise HTTPException(status_code=404)
@@ -336,7 +488,7 @@ async def editar_credencial(
 
 @app.delete("/credenciais/{id}")
 def excluir_credencial(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role != 'admin': raise HTTPException(status_code=403)
+    check_admin(current_user)
     
     c = db.query(Credencial).filter(Credencial.id == id).first()
     if c:
@@ -348,7 +500,8 @@ def excluir_credencial(id: int, db: Session = Depends(get_db), current_user: Use
 
 # --- ROTAS TELEFONIA ---
 @app.get("/telefonia/")
-def listar_numeros(operadora: Optional[str] = None, mes: Optional[str] = None, db: Session = Depends(get_db)):
+def listar_numeros(operadora: Optional[str] = None, mes: Optional[str] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    verificar_permissao(current_user, PERMISSOES["telefonia"])
     query = db.query(NumeroTelefonico)
     if operadora and operadora != 'Todos':
         query = query.filter(NumeroTelefonico.operadora == operadora)
@@ -475,7 +628,8 @@ async def upload_inventario_csv(
 # --- ROTAS CONTRATOS ---
 @app.get("/contratos/")
 def listar_contratos(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(Contrato).order_by(Contrato.id.desc()).all()
+    verificar_permissao(current_user, PERMISSOES["contratos"])
+    return db.query(Contrato).filter(Contrato.ativo == True).order_by(Contrato.id.desc()).all()
 
 @app.post("/contratos/")
 async def criar_contrato(
@@ -566,10 +720,31 @@ def excluir_contrato(id: int, db: Session = Depends(get_db), current_user: User 
         registrar_log(db, current_user.username, "DELETE", "CONTRATO", id, f"Excluiu {nome}")
     return {"status": "deleted"}
 
+@app.put("/contratos/{id}/inativar")
+def inativar_contrato(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    c = db.query(Contrato).filter(Contrato.id == id).first()
+    if not c: raise HTTPException(status_code=404, detail="Contrato não encontrado")
+    nome = c.nome_amigavel
+    c.ativo = False
+    db.commit()
+    registrar_log(db, current_user.username, "INATIVAR", "CONTRATO", id, f"Inativou contrato: {nome}")
+    return {"status": "inativado", "mensagem": f"Contrato '{nome}' inativado com sucesso"}
+
+@app.put("/contratos/{id}/ativar")
+def ativar_contrato(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    c = db.query(Contrato).filter(Contrato.id == id).first()
+    if not c: raise HTTPException(status_code=404, detail="Contrato não encontrado")
+    nome = c.nome_amigavel
+    c.ativo = True
+    db.commit()
+    registrar_log(db, current_user.username, "ATIVAR", "CONTRATO", id, f"Ativou contrato: {nome}")
+    return {"status": "ativado", "mensagem": f"Contrato '{nome}' ativado com sucesso"}
+
 # --- ROTAS FATURAS ---
 @app.get("/faturas/")
 def listar_faturas(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)): 
-    return db.query(Fatura).all()
+    verificar_permissao(current_user, PERMISSOES["faturas"])
+    return db.query(Fatura).filter(Fatura.ativo == True).all()
 
 @app.post("/faturas/")
 async def lancar_fatura(
@@ -670,6 +845,24 @@ async def atualizar_status(
         db.commit()
         registrar_log(db, current_user.username, "UPDATE", "FATURA", id, detalhes)
     return {"status": "ok"}
+
+@app.put("/faturas/{id}/inativar")
+def inativar_fatura(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    f = db.query(Fatura).filter(Fatura.id == id).first()
+    if not f: raise HTTPException(status_code=404, detail="Fatura não encontrada")
+    f.ativo = False
+    db.commit()
+    registrar_log(db, current_user.username, "INATIVAR", "FATURA", id, f"Inativou fatura #{id}")
+    return {"status": "inativado", "mensagem": f"Fatura #{id} inativada com sucesso"}
+
+@app.put("/faturas/{id}/ativar")
+def ativar_fatura(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    f = db.query(Fatura).filter(Fatura.id == id).first()
+    if not f: raise HTTPException(status_code=404, detail="Fatura não encontrada")
+    f.ativo = True
+    db.commit()
+    registrar_log(db, current_user.username, "ATIVAR", "FATURA", id, f"Ativou fatura #{id}")
+    return {"status": "ativado", "mensagem": f"Fatura #{id} ativada com sucesso"}
 
 @app.get("/dashboard/stats")
 def get_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
