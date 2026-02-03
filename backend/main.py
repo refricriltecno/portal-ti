@@ -9,137 +9,169 @@ from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, sta
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy import create_engine, Column, Integer, String, Date, Float, ForeignKey, Boolean, Text, DateTime
-from sqlalchemy.orm import sessionmaker, declarative_base, relationship, Session
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from motor.motor_asyncio import AsyncClient, AsyncDatabase
+from pymongo import ASCENDING
+from bson.objectid import ObjectId
+from pydantic import BaseModel, Field
 
-# --- CONFIGURAÇÃO ---
-DATABASE_URL = "postgresql://portal_user:Adm%40Ref212@10.1.1.248:5432/portal_ti"
+# --- CONFIGURAÇÃO MONGODB ---
+DATABASE_URL = os.getenv("DATABASE_URL", "mongodb+srv://tecnologia_db_user:AdmRef212@refricril.lfg6bem.mongodb.net/?appName=Refricril")
 UPLOAD_DIR = "uploads"
 SECRET_KEY = "segredo_super_seguro_refricril"
 ALGORITHM = "HS256"
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# Cliente MongoDB
+mongodb_client: Optional[AsyncClient] = None
+db: Optional[AsyncDatabase] = None
+
+async def connect_to_mongo():
+    global mongodb_client, db
+    mongodb_client = AsyncClient(DATABASE_URL)
+    db = mongodb_client["portal_ti"]
+    # Criar índices
+    await db["users"].create_index([("username", ASCENDING)], unique=True)
+    print("✅ Conectado ao MongoDB Atlas")
+
+async def close_mongo_connection():
+    global mongodb_client
+    if mongodb_client:
+        mongodb_client.close()
+        print("❌ Desconectado do MongoDB")
 
 # --- SEGURANÇA ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
-# --- MODELOS ---
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
-    role = Column(String, default="user")
-    is_active = Column(Boolean, default=True)
-    foto_perfil = Column(String, nullable=True)
+# --- MODELOS PYDANTIC ---
+class UserDB(BaseModel):
+    _id: Optional[str] = Field(None, alias="_id")
+    username: str
+    hashed_password: str
+    role: str = "user"
+    is_active: bool = True
+    foto_perfil: Optional[str] = None
+    
+    class Config:
+        populate_by_name = True
 
-class AuditLog(Base):
-    __tablename__ = "audit_logs"
-    id = Column(Integer, primary_key=True, index=True)
-    usuario = Column(String)
-    acao = Column(String)
-    alvo = Column(String)
-    alvo_id = Column(Integer)
-    detalhes = Column(Text)
-    data_hora = Column(DateTime, default=datetime.now)
+class AuditLogDB(BaseModel):
+    _id: Optional[str] = Field(None, alias="_id")
+    usuario: str
+    acao: str
+    alvo: str
+    alvo_id: Optional[str] = None
+    detalhes: str
+    data_hora: datetime = Field(default_factory=datetime.now)
+    
+    class Config:
+        populate_by_name = True
 
-class NumeroTelefonico(Base):
-    __tablename__ = "numeros_telefonicos"
-    id = Column(Integer, primary_key=True, index=True)
-    numero = Column(String)
-    operadora = Column(String) 
-    descricao = Column(String, nullable=True)
-    valor = Column(Float, default=0.0)
-    mes_referencia = Column(String)
-    setor = Column(String, nullable=True)
-    filial = Column(String, nullable=True)
-    ativo = Column(Boolean, default=True)
-    data_upload = Column(Date, default=datetime.now().date)
+class NumeroTelefonicoDB(BaseModel):
+    _id: Optional[str] = Field(None, alias="_id")
+    numero: str
+    operadora: str
+    descricao: Optional[str] = None
+    valor: float = 0.0
+    mes_referencia: str
+    setor: Optional[str] = None
+    filial: Optional[str] = None
+    ativo: bool = True
+    data_upload: date = Field(default_factory=datetime.now().date)
+    
+    class Config:
+        populate_by_name = True
 
-class Contrato(Base):
-    __tablename__ = "contratos"
-    id = Column(Integer, primary_key=True, index=True)
-    nome_amigavel = Column(String, index=True)
-    filial = Column(String)
-    fornecedor_razao = Column(String)
-    cnpj_fornecedor = Column(String)
-    fornecedor2_razao = Column(String, nullable=True)
-    cnpj_fornecedor2 = Column(String, nullable=True)
-    centro_custo = Column(String)
-    tipo = Column(String)
-    valor_total = Column(Float, default=0.0)
-    tempo_contrato_meses = Column(Integer, nullable=True)
-    data_inicio_cobranca = Column(Date, nullable=True)
-    dia_vencimento = Column(Integer, default=0)
-    identificadores = Column(String, nullable=True)
-    info_adicional = Column(Text, nullable=True)
-    tem_rateio = Column(Boolean, default=False)
-    empresas_rateio = Column(String, nullable=True)
-    caminho_arquivo = Column(String, nullable=True)
-    cancelado_em = Column(String, nullable=True)
-    ativo = Column(Boolean, default=True)
-    faturas = relationship("Fatura", back_populates="contrato", cascade="all, delete-orphan")
+class ContratoDB(BaseModel):
+    _id: Optional[str] = Field(None, alias="_id")
+    nome_amigavel: str
+    filial: str
+    fornecedor_razao: str
+    cnpj_fornecedor: str
+    fornecedor2_razao: Optional[str] = None
+    cnpj_fornecedor2: Optional[str] = None
+    centro_custo: str
+    tipo: str
+    valor_total: float = 0.0
+    tempo_contrato_meses: Optional[int] = None
+    data_inicio_cobranca: Optional[date] = None
+    dia_vencimento: int = 0
+    identificadores: Optional[str] = None
+    info_adicional: Optional[str] = None
+    tem_rateio: bool = False
+    empresas_rateio: Optional[str] = None
+    caminho_arquivo: Optional[str] = None
+    cancelado_em: Optional[str] = None
+    ativo: bool = True
+    
+    class Config:
+        populate_by_name = True
 
-class Fatura(Base):
-    __tablename__ = "faturas"
-    id = Column(Integer, primary_key=True, index=True)
-    contrato_id = Column(Integer, ForeignKey("contratos.id"))
-    mes_referencia = Column(String)
-    valor = Column(Float)
-    data_vencimento = Column(Date, nullable=True)
-    data_pagamento = Column(Date, nullable=True)
-    numero_circuito = Column(String, nullable=True)
-    status = Column(String, default="Pendente envio do boleto")
-    desconto = Column(Float, default=0.0)
-    acrescimo = Column(Float, default=0.0)
-    valor_ajustado = Column(Float)
-    observacoes = Column(Text, nullable=True)
-    caminho_arquivo = Column(String)
-    caminho_nf = Column(String, nullable=True)
-    data_upload = Column(Date, default=datetime.now().date)
-    ativo = Column(Boolean, default=True)
-    contrato = relationship("Contrato", back_populates="faturas")
+class FaturaDB(BaseModel):
+    _id: Optional[str] = Field(None, alias="_id")
+    contrato_id: str
+    mes_referencia: str
+    valor: float
+    data_vencimento: Optional[date] = None
+    data_pagamento: Optional[date] = None
+    numero_circuito: Optional[str] = None
+    status: str = "Pendente envio do boleto"
+    desconto: float = 0.0
+    acrescimo: float = 0.0
+    valor_ajustado: float
+    observacoes: Optional[str] = None
+    caminho_arquivo: str
+    caminho_nf: Optional[str] = None
+    data_upload: date = Field(default_factory=datetime.now().date)
+    ativo: bool = True
+    
+    class Config:
+        populate_by_name = True
 
-class Credencial(Base):
-    __tablename__ = "credenciais"
-    id = Column(Integer, primary_key=True, index=True)
-    nome_servico = Column(String, index=True)
-    descricao = Column(String, nullable=True)
-    url_acesso = Column(String)
-    usuario = Column(String)
-    senha = Column(String)
-    email = Column(String, nullable=True)
-    telefone = Column(String, nullable=True)
-    responsavel = Column(String, nullable=True)
-    ativo = Column(Boolean, default=True)
-    data_criacao = Column(DateTime, default=datetime.now)
-    data_atualizacao = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-
-Base.metadata.create_all(bind=engine)
+class CredencialDB(BaseModel):
+    _id: Optional[str] = Field(None, alias="_id")
+    nome_servico: str
+    descricao: Optional[str] = None
+    url_acesso: str
+    usuario: str
+    senha: str
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    responsavel: Optional[str] = None
+    ativo: bool = True
+    data_criacao: datetime = Field(default_factory=datetime.now)
+    data_atualizacao: datetime = Field(default_factory=datetime.now)
+    
+    class Config:
+        populate_by_name = True
 
 app = FastAPI(title="Portal Gestão TI")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-if not os.path.exists(UPLOAD_DIR): os.makedirs(UPLOAD_DIR)
+
+# Criar diretório de uploads se não existir
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
-# --- FUNÇÕES AUXILIARES ---
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# --- LIFECYCLE ---
+@app.on_event("startup")
+async def startup():
+    await connect_to_mongo()
 
-def registrar_log(db: Session, usuario: str, acao: str, alvo: str, alvo_id: int, detalhes: str):
+@app.on_event("shutdown")
+async def shutdown():
+    await close_mongo_connection()
+
+# --- FUNÇÕES AUXILIARES ---
+async def get_db():
+    return db
+
+async def registrar_log(usuario: str, acao: str, alvo: str, alvo_id: str, detalhes: str):
     try:
-        log = AuditLog(usuario=usuario, acao=acao, alvo=alvo, alvo_id=alvo_id, detalhes=detalhes[:500])
-        db.add(log)
-        db.commit()
+        log = AuditLogDB(usuario=usuario, acao=acao, alvo=alvo, alvo_id=alvo_id, detalhes=detalhes[:500])
+        await db["audit_logs"].insert_one(log.model_dump(by_alias=True, exclude_none=True))
     except Exception as e:
         print(f"Erro Log: {e}")
 
@@ -166,45 +198,49 @@ def safe_date(v):
     except: return None
 
 # --- AUTH ---
-async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+async def get_current_user(token: str = Depends(oauth2_scheme), database = Depends(get_db)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
-        if username is None: raise HTTPException(status_code=401)
+        if username is None: 
+            raise HTTPException(status_code=401)
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
-    user = db.query(User).filter(User.username == username).first()
-    if user is None: raise HTTPException(status_code=401)
-    return user
+    
+    user_doc = await database["users"].find_one({"username": username})
+    if user_doc is None: 
+        raise HTTPException(status_code=401)
+    return user_doc
 
-async def get_current_user_optional(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+async def get_current_user_optional(token: str = Depends(oauth2_scheme), database = Depends(get_db)):
     """Retorna o usuário atual se autenticado, ou None se não autenticado"""
     if not token:
         return None
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
-        if username is None: return None
-        user = db.query(User).filter(User.username == username).first()
-        return user
+        if username is None: 
+            return None
+        user_doc = await database["users"].find_one({"username": username})
+        return user_doc
     except JWTError:
         return None
 
 # --- FUNÇÕES DE PERMISSÕES ---
-def verificar_permissao(usuario: User, rotas_permitidas: list):
+def verificar_permissao(usuario: dict, rotas_permitidas: list):
     """Verifica se o usuário tem permissão para acessar a rota"""
-    if usuario.role not in rotas_permitidas:
+    if usuario.get("role") not in rotas_permitidas:
         raise HTTPException(status_code=403, detail="Você não tem permissão para acessar este recurso")
 
-def check_admin(usuario: User):
+def check_admin(usuario: dict):
     """Verifica se o usuário é admin"""
-    if usuario.role != "admin":
+    if usuario.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Acesso apenas para administradores")
 
-def check_can_view_credentials(usuario: User):
+def check_can_view_credentials(usuario: dict):
     """Verifica se o usuário pode visualizar credenciais"""
     # Apenas admin e tercerizado podem ver credenciais
-    if usuario.role not in ["admin", "tercerizado"]:
+    if usuario.get("role") not in ["admin", "tercerizado"]:
         raise HTTPException(status_code=403, detail="Acesso apenas para administradores ou terceirizados")
 
 # --- MAPEAMENTO DE PERMISSÕES POR RECURSO ---
@@ -220,12 +256,12 @@ PERMISSOES = {
 }
 
 @app.post("/token")
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == form_data.username).first()
-    if not user or not pwd_context.verify(form_data.password, user.hashed_password):
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), database = Depends(get_db)):
+    user = await database["users"].find_one({"username": form_data.username})
+    if not user or not pwd_context.verify(form_data.password, user.get("hashed_password", "")):
         raise HTTPException(status_code=400, detail="Credenciais inválidas")
-    token = jwt.encode({"sub": user.username, "role": user.role}, SECRET_KEY, algorithm=ALGORITHM)
-    return {"access_token": token, "token_type": "bearer", "role": user.role, "username": user.username, "foto_perfil": user.foto_perfil}
+    token = jwt.encode({"sub": user["username"], "role": user["role"]}, SECRET_KEY, algorithm=ALGORITHM)
+    return {"access_token": token, "token_type": "bearer", "role": user["role"], "username": user["username"], "foto_perfil": user.get("foto_perfil")}
 
 # --- REGISTRO DE NOVO USUÁRIO (self-signup ou admin) ---
 @app.post("/register")

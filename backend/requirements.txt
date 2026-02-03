@@ -1,8 +1,8 @@
-fastapi
+﻿fastapi
 uvicorn
-sqlalchemy
+motor
+pymongo
 python-multipart
-psycopg2-binary
 python-jose[cryptography]
 passlib[bcrypt]
 python-dotenv
