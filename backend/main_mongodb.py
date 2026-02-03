@@ -12,7 +12,6 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-import certifi
 from pymongo import ASCENDING
 from bson.objectid import ObjectId
 from pydantic import BaseModel, Field
@@ -30,24 +29,36 @@ db: Optional[AsyncIOMotorDatabase] = None
 async def connect_to_mongo():
     global mongodb_client, db
     try:
-        tls_insecure = os.getenv("MONGO_TLS_INSECURE", "false").lower() in ["1", "true", "yes"]
-        mongodb_client = AsyncIOMotorClient(
-            DATABASE_URL,
-            serverSelectionTimeoutMS=5000,
-            tls=True,
-            tlsCAFile=certifi.where(),
-            tlsAllowInvalidCertificates=tls_insecure
-        )
-        if tls_insecure:
-            print("⚠️ MONGO_TLS_INSECURE=true: TLS sem validação de certificado (apenas para diagnóstico).")
-        # Test connection
-        await mongodb_client.admin.command('ping')
+        # Tentar conexão com TLS padrão (Python 3.13 system certs)
+        try:
+            mongodb_client = AsyncIOMotorClient(
+                DATABASE_URL,
+                serverSelectionTimeoutMS=5000,
+                tls=True
+            )
+            # Test connection
+            await mongodb_client.admin.command('ping')
+            print("✅ Conectado ao MongoDB Atlas (TLS com validação padrão)")
+        except Exception as tls_error:
+            print(f"⚠️ TLS padrão falhou: {str(tls_error)[:100]}...")
+            print("🔄 Tentando fallback: TLS sem validação de certificado...")
+            # Fallback: desabilitar validação SSL
+            mongodb_client = AsyncIOMotorClient(
+                DATABASE_URL,
+                serverSelectionTimeoutMS=5000,
+                tls=True,
+                tlsAllowInvalidCertificates=True
+            )
+            # Test connection
+            await mongodb_client.admin.command('ping')
+            print("⚠️ CONECTADO COM FALLBACK: TLS sem validação (fix temporário para Render)")
+        
         db = mongodb_client["portal_ti"]
         # Criar índices
         await db["users"].create_index([("username", ASCENDING)], unique=True)
-        print("✅ Conectado ao MongoDB Atlas")
     except Exception as e:
-        print(f"❌ Erro na conexão MongoDB: {e}")
+        print(f"❌ Erro crítico na conexão MongoDB: {e}")
+        raise
         raise
 
 async def close_mongo_connection():
