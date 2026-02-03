@@ -28,38 +28,45 @@ db: Optional[AsyncIOMotorDatabase] = None
 
 async def connect_to_mongo():
     global mongodb_client, db
-    try:
-        # Tentar conexão com TLS padrão (Python 3.13 system certs)
+    
+    strategies = [
+        {
+            "name": "TLS com validação padrão",
+            "config": {"serverSelectionTimeoutMS": 10000, "tls": True}
+        },
+        {
+            "name": "TLS sem validação de certificado",
+            "config": {"serverSelectionTimeoutMS": 10000, "tls": True, "tlsAllowInvalidCertificates": True}
+        },
+        {
+            "name": "Conexão sem TLS (fallback máximo)",
+            "config": {"serverSelectionTimeoutMS": 10000, "tls": False}
+        }
+    ]
+    
+    for strategy in strategies:
         try:
-            mongodb_client = AsyncIOMotorClient(
-                DATABASE_URL,
-                serverSelectionTimeoutMS=5000,
-                tls=True
-            )
-            # Test connection
+            print(f"🔄 Tentando estratégia: {strategy['name']}...")
+            mongodb_client = AsyncIOMotorClient(DATABASE_URL, **strategy['config'])
+            
+            # Test connection with longer timeout
             await mongodb_client.admin.command('ping')
-            print("✅ Conectado ao MongoDB Atlas (TLS com validação padrão)")
-        except Exception as tls_error:
-            print(f"⚠️ TLS padrão falhou: {str(tls_error)[:100]}...")
-            print("🔄 Tentando fallback: TLS sem validação de certificado...")
-            # Fallback: desabilitar validação SSL
-            mongodb_client = AsyncIOMotorClient(
-                DATABASE_URL,
-                serverSelectionTimeoutMS=5000,
-                tls=True,
-                tlsAllowInvalidCertificates=True
-            )
-            # Test connection
-            await mongodb_client.admin.command('ping')
-            print("⚠️ CONECTADO COM FALLBACK: TLS sem validação (fix temporário para Render)")
-        
-        db = mongodb_client["portal_ti"]
-        # Criar índices
-        await db["users"].create_index([("username", ASCENDING)], unique=True)
-    except Exception as e:
-        print(f"❌ Erro crítico na conexão MongoDB: {e}")
-        raise
-        raise
+            
+            print(f"✅ Conectado ao MongoDB Atlas via: {strategy['name']}")
+            db = mongodb_client["portal_ti"]
+            
+            # Criar índices
+            await db["users"].create_index([("username", ASCENDING)], unique=True)
+            print("✅ Índices criados com sucesso")
+            return
+            
+        except Exception as e:
+            error_msg = str(e)[:80]
+            print(f"❌ Estratégia falhou: {error_msg}")
+            if strategy == strategies[-1]:
+                # Última estratégia falhou
+                print(f"❌ TODAS AS ESTRATÉGIAS FALHARAM")
+                raise Exception(f"Não foi possível conectar ao MongoDB. Último erro: {e}")
 
 async def close_mongo_connection():
     global mongodb_client
