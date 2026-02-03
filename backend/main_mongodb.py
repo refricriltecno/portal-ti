@@ -30,12 +30,16 @@ db: Optional[AsyncIOMotorDatabase] = None
 async def connect_to_mongo():
     global mongodb_client, db
     try:
+        tls_insecure = os.getenv("MONGO_TLS_INSECURE", "false").lower() in ["1", "true", "yes"]
         mongodb_client = AsyncIOMotorClient(
             DATABASE_URL,
             serverSelectionTimeoutMS=5000,
             tls=True,
-            tlsCAFile=certifi.where()
+            tlsCAFile=certifi.where(),
+            tlsAllowInvalidCertificates=tls_insecure
         )
+        if tls_insecure:
+            print("⚠️ MONGO_TLS_INSECURE=true: TLS sem validação de certificado (apenas para diagnóstico).")
         # Test connection
         await mongodb_client.admin.command('ping')
         db = mongodb_client["portal_ti"]
