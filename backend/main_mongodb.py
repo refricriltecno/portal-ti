@@ -12,6 +12,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+import certifi
 from pymongo import ASCENDING
 from bson.objectid import ObjectId
 from pydantic import BaseModel, Field
@@ -29,7 +30,12 @@ db: Optional[AsyncIOMotorDatabase] = None
 async def connect_to_mongo():
     global mongodb_client, db
     try:
-        mongodb_client = AsyncIOMotorClient(DATABASE_URL, serverSelectionTimeoutMS=5000)
+        mongodb_client = AsyncIOMotorClient(
+            DATABASE_URL,
+            serverSelectionTimeoutMS=5000,
+            tls=True,
+            tlsCAFile=certifi.where()
+        )
         # Test connection
         await mongodb_client.admin.command('ping')
         db = mongodb_client["portal_ti"]
