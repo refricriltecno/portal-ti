@@ -106,6 +106,14 @@ async def close_mongo_connection():
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
+def _truncate_bcrypt_password(password: str) -> str:
+    if not password:
+        return ""
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) <= 72:
+        return password
+    return password_bytes[:72].decode("utf-8", "ignore")
+
 # --- FUNÇÕES AUXILIARES ---
 async def get_db():
     if db is None:
@@ -232,10 +240,9 @@ async def shutdown():
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), database = Depends(get_db)):
     try:
         print(f"🔐 Tentativa de login: {form_data.username}")
-        
-        # BCrypt tem limite de 72 bytes - truncar se necessário
-        password_truncated = form_data.password[:72]
-        
+
+        password_truncated = _truncate_bcrypt_password(form_data.password)
+
         user = await database["users"].find_one({"username": form_data.username})
         
         if not user:
@@ -281,7 +288,8 @@ async def register(username: str = Form(...), password: str = Form(...), current
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="Senha deve ter no mínimo 6 caracteres")
     
-    hashed = pwd_context.hash(password)
+    password_truncated = _truncate_bcrypt_password(password)
+    hashed = pwd_context.hash(password_truncated)
     novo = {
         "username": username, 
         "hashed_password": hashed, 
@@ -314,10 +322,12 @@ async def change_password(current_password: str = Form(...), new_password: str =
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="Senha deve ter no mínimo 6 caracteres")
     
-    if not pwd_context.verify(current_password, current_user.get("hashed_password", "")):
+    current_password_truncated = _truncate_bcrypt_password(current_password)
+    if not pwd_context.verify(current_password_truncated, current_user.get("hashed_password", "")):
         raise HTTPException(status_code=400, detail="Senha atual incorreta")
     
-    new_hashed = pwd_context.hash(new_password)
+    new_password_truncated = _truncate_bcrypt_password(new_password)
+    new_hashed = pwd_context.hash(new_password_truncated)
     await database["users"].update_one(
         {"_id": current_user["_id"]},
         {"$set": {"hashed_password": new_hashed}}
@@ -406,7 +416,8 @@ async def create_user(username: str = Form(...), password: str = Form(...), role
     if await database["users"].find_one({"username": username}): 
         raise HTTPException(status_code=400, detail="Usuário já existe")
     
-    hashed = pwd_context.hash(password)
+    password_truncated = _truncate_bcrypt_password(password)
+    hashed = pwd_context.hash(password_truncated)
     novo = {
         "username": username, 
         "hashed_password": hashed, 
