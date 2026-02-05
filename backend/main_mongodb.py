@@ -218,14 +218,6 @@ if not os.path.exists(UPLOAD_DIR):
 
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
-# --- SERVIR FRONTEND ESTÁTICO ---
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
-if os.path.exists(FRONTEND_DIR):
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
-    print(f"✅ Frontend estático servido de: {FRONTEND_DIR}")
-else:
-    print(f"⚠️ Diretório do frontend não encontrado: {FRONTEND_DIR}")
-
 # --- LIFECYCLE ---
 @app.on_event("startup")
 async def startup():
@@ -1122,6 +1114,14 @@ async def get_stats(database = Depends(get_db), current_user: dict = Depends(get
         "valor_pendente": valor_pendente,
         "valor_pago": valor_pago
     }
+
+# --- SERVIR FRONTEND ESTÁTICO (após todas as rotas da API) ---
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+if os.path.exists(FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    print(f"✅ Frontend estático servido de: {FRONTEND_DIR}")
+else:
+    print(f"⚠️ Diretório do frontend não encontrado: {FRONTEND_DIR}")
 
 if __name__ == "__main__":
     import uvicorn
