@@ -293,7 +293,7 @@ async def register(username: str = Form(...), password: str = Form(...), current
     novo = {
         "username": username, 
         "hashed_password": hashed, 
-        "role": "user", 
+        "role": "normal", 
         "is_active": True,
         "foto_perfil": None
     }
@@ -313,7 +313,7 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
         "id": str(current_user.get("_id")),
         "username": current_user["username"], 
         "role": current_user["role"], 
-        "is_active": current_user["is_active"], 
+        "is_active": current_user.get("is_active", current_user.get("ativo", True)), 
         "foto_perfil": current_user.get("foto_perfil")
     }
 
@@ -407,10 +407,10 @@ async def list_users(current_user: dict = Depends(get_current_user), database = 
     if current_user.get("role") != 'admin': 
         raise HTTPException(status_code=403)
     users = await database["users"].find({}).to_list(None)
-    return [{"_id": str(u["_id"]), "username": u["username"], "role": u["role"], "is_active": u["is_active"]} for u in users]
+    return [{"id": str(u["_id"]), "_id": str(u["_id"]), "username": u["username"], "role": u["role"], "is_active": u.get("is_active", u.get("ativo", True))} for u in users]
 
 @app.post("/users/")
-async def create_user(username: str = Form(...), password: str = Form(...), role: str = Form("user"), current_user: dict = Depends(get_current_user), database = Depends(get_db)):
+async def create_user(username: str = Form(...), password: str = Form(...), role: str = Form("normal"), current_user: dict = Depends(get_current_user), database = Depends(get_db)):
     if current_user.get("role") != 'admin': 
         raise HTTPException(status_code=403)
     if await database["users"].find_one({"username": username}): 
@@ -773,7 +773,7 @@ async def upload_inventario_csv(
 async def listar_contratos(database = Depends(get_db), current_user: dict = Depends(get_current_user)):
     verificar_permissao(current_user, PERMISSOES["contratos"])
     contratos = await database["contratos"].find({"ativo": True}).sort([("_id", -1)]).to_list(None)
-    return [{"_id": str(c["_id"]), **{k: v for k, v in c.items() if k != "_id"}} for c in contratos]
+    return [{"id": str(c["_id"]), "_id": str(c["_id"]), **{k: v for k, v in c.items() if k != "_id"}} for c in contratos]
 
 @app.post("/contratos/")
 async def criar_contrato(
@@ -948,7 +948,7 @@ async def ativar_contrato(id: str, database = Depends(get_db), current_user: dic
 async def listar_faturas(database = Depends(get_db), current_user: dict = Depends(get_current_user)): 
     verificar_permissao(current_user, PERMISSOES["faturas"])
     faturas = await database["faturas"].find({"ativo": True}).to_list(None)
-    return [{"_id": str(f["_id"]), **{k: v for k, v in f.items() if k != "_id"}} for f in faturas]
+    return [{"id": str(f["_id"]), "_id": str(f["_id"]), **{k: v for k, v in f.items() if k != "_id"}} for f in faturas]
 
 @app.post("/faturas/")
 async def lancar_fatura(

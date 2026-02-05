@@ -45,7 +45,7 @@ async def create_admin_user():
             "username": username,
             "hashed_password": pwd_context.hash(password_truncated),
             "role": "admin",
-            "ativo": True
+            "is_active": True
         }
         
         result = await users_collection.insert_one(user_data)
