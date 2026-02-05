@@ -230,17 +230,39 @@ async def shutdown():
 # --- AUTH ROUTES ---
 @app.post("/token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), database = Depends(get_db)):
-    user = await database["users"].find_one({"username": form_data.username})
-    if not user or not pwd_context.verify(form_data.password, user.get("hashed_password", "")):
-        raise HTTPException(status_code=400, detail="Credenciais inválidas")
-    token = jwt.encode({"sub": user["username"], "role": user["role"]}, SECRET_KEY, algorithm=ALGORITHM)
-    return {
-        "access_token": token, 
-        "token_type": "bearer", 
-        "role": user["role"], 
-        "username": user["username"], 
-        "foto_perfil": user.get("foto_perfil")
-    }
+    try:
+        print(f"🔐 Tentativa de login: {form_data.username}")
+        
+        # BCrypt tem limite de 72 bytes - truncar se necessário
+        password_truncated = form_data.password[:72]
+        
+        user = await database["users"].find_one({"username": form_data.username})
+        
+        if not user:
+            print(f"❌ Usuário não encontrado: {form_data.username}")
+            raise HTTPException(status_code=400, detail="Credenciais inválidas")
+        
+        password_valid = pwd_context.verify(password_truncated, user.get("hashed_password", ""))
+        
+        if not password_valid:
+            print(f"❌ Senha incorreta para: {form_data.username}")
+            raise HTTPException(status_code=400, detail="Credenciais inválidas")
+        
+        print(f"✅ Login bem-sucedido: {form_data.username}")
+        
+        token = jwt.encode({"sub": user["username"], "role": user["role"]}, SECRET_KEY, algorithm=ALGORITHM)
+        return {
+            "access_token": token, 
+            "token_type": "bearer", 
+            "role": user["role"], 
+            "username": user["username"], 
+            "foto_perfil": user.get("foto_perfil")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Erro no login: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro no servidor: {str(e)}")
 
 @app.post("/register")
 async def register(username: str = Form(...), password: str = Form(...), current_user: Optional[dict] = Depends(get_current_user_optional), database = Depends(get_db)):
