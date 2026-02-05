@@ -31,16 +31,40 @@ async def connect_to_mongo():
     
     strategies = [
         {
-            "name": "TLS com validação padrão",
-            "config": {"serverSelectionTimeoutMS": 10000, "tls": True}
+            "name": "TLS com retryWrites e timeouts longos",
+            "config": {
+                "serverSelectionTimeoutMS": 30000,
+                "connectTimeoutMS": 30000,
+                "socketTimeoutMS": 30000,
+                "tls": True,
+                "retryWrites": True,
+                "retryReads": True,
+                "maxPoolSize": 10,
+                "minPoolSize": 1,
+                "maxIdleTimeMS": 45000
+            }
         },
         {
             "name": "TLS sem validação de certificado",
-            "config": {"serverSelectionTimeoutMS": 10000, "tls": True, "tlsAllowInvalidCertificates": True}
+            "config": {
+                "serverSelectionTimeoutMS": 30000,
+                "connectTimeoutMS": 30000,
+                "socketTimeoutMS": 30000,
+                "tls": True,
+                "tlsAllowInvalidCertificates": True,
+                "retryWrites": True,
+                "retryReads": True
+            }
         },
         {
             "name": "Conexão sem TLS (fallback máximo)",
-            "config": {"serverSelectionTimeoutMS": 10000, "tls": False}
+            "config": {
+                "serverSelectionTimeoutMS": 30000,
+                "connectTimeoutMS": 30000,
+                "socketTimeoutMS": 30000,
+                "tls": False,
+                "retryWrites": False
+            }
         }
     ]
     
@@ -56,8 +80,12 @@ async def connect_to_mongo():
             db = mongodb_client["portal_ti"]
             
             # Criar índices
-            await db["users"].create_index([("username", ASCENDING)], unique=True)
-            print("✅ Índices criados com sucesso")
+            try:
+                await db["users"].create_index([("username", ASCENDING)], unique=True)
+                print("✅ Índices criados com sucesso")
+            except Exception as idx_err:
+                print(f"⚠️ Aviso ao criar índices: {idx_err}")
+            
             return
             
         except Exception as e:
