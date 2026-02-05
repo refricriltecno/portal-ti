@@ -6,7 +6,11 @@ import {
 } from 'lucide-react';
 import LogoRefricril from './assets/logo-refricril.png';
 
-const API_URL = "http://127.0.0.1:8001";
+// URL da API - funciona tanto localmente quanto em produção
+const API_URL = 
+  typeof window !== 'undefined' && window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://127.0.0.1:8001'
+    : window.location.origin;
 
 const LISTA_FILIAIS = ["00 - Administrativo", "01 - Matriz", "08 - Porto Alegre", "09 - Floripa", "06 - Blumenau", "12 - Itajaí", "03 - Joinville", "05 - Londrina", "17 - CD São Paulo", "22 - São Paulo (Itaim)", "21 - São Paulo (Osasco)", "20 - São Paulo (Guarulhos)", "10 - São Paulo", "02 - CD Vila Velha", "24 - CD Goiânia", "15 - Teresina", "18 - Belo Horizonte", "11 - Vila Velha", "07 - CD Içara", "13 - CD Paraíba", "27 - Brasília", "14 - Goiania"];
 const LISTA_CENTROS_CUSTO = ["TI - Infraestrutura", "TI - Sistemas", "TI - Geral", "Administrativo", "Comercial", "Financeiro", "RH", "Logística"];
